@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Meeting Action Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..700&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a calm single column. Summary strip, add-action card, then one card per owner in a wrapping grid. */
+:root {
+  --bg: #eceff2;
+  --card: #fbfcfd;
+  --field: #ffffff;
+  --soft: #f0f2f5;
+  --ink: #1d242d;
+  --muted: #626d7b;
+  --line: #dbe0e6;
+  --accent: #d9520b;
+  --on-accent: #ffffff;
+  --red: #b3261e;
+  --red-soft: #fbeae8;
+  --red-line: #f0c8c3;
+  --font-display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
+  --font-body: 'Figtree', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #13171c;
+    --card: #1b2027;
+    --field: #151a20;
+    --soft: #232a33;
+    --ink: #e9ecef;
+    --muted: #97a1ad;
+    --line: #2c343e;
+    --accent: #ff8a3d;
+    --on-accent: #1a0f06;
+    --red: #ff7a6e;
+    --red-soft: #2d1a19;
+    --red-line: #5a2e2b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #13171c;
+  --card: #1b2027;
+  --field: #151a20;
+  --soft: #232a33;
+  --ink: #e9ecef;
+  --muted: #97a1ad;
+  --line: #2c343e;
+  --accent: #ff8a3d;
+  --on-accent: #1a0f06;
+  --red: #ff7a6e;
+  --red-soft: #2d1a19;
+  --red-line: #5a2e2b;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { color-scheme: light; }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) { color-scheme: dark; } }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 18px;
+  line-height: 1.45;
+  padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+h1, h2, h3, p, dl, dd, dt, ul { margin: 0; padding: 0; }
+button, input { font: inherit; color: inherit; }
+
+.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 24px; }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem, 5vw, 2.6rem); line-height: 1.1; letter-spacing: -0.02em; text-wrap: balance; }
+.sub { color: var(--muted); margin-top: 6px; }
+.today { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+
+/* Summary */
+.summary { display: flex; flex-direction: column; gap: 18px; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.stat dt { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.stat dd { font-family: var(--font-display); font-weight: 700; font-size: clamp(2.2rem, 7vw, 3rem); line-height: 1.05; font-variant-numeric: tabular-nums; }
+.stat.is-late dt, .stat.is-late dd { color: var(--red); }
+.progress { height: 10px; border-radius: 999px; background: var(--soft); overflow: hidden; }
+.progress span { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width 0.3s ease; }
+
+/* Add form */
+.add h2, .board-head h2 { font-family: var(--font-display); font-weight: 600; font-size: 1.3rem; letter-spacing: -0.01em; }
+.add h2 { margin-bottom: 14px; }
+.fields { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 14px; align-items: end; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field label { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.field input {
+  width: 100%;
+  min-width: 0;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-height: 52px;
+}
+.field input::placeholder { color: var(--muted); opacity: 0.8; }
+.field input:focus-visible, .btn:focus-visible, .chip:focus-visible, .link:focus-visible, .del:focus-visible, .undo:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.btn {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 0;
+  border-radius: 10px;
+  min-height: 52px;
+  padding: 0 24px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn:hover { filter: brightness(1.06); }
+.btn:active { transform: translateY(1px); }
+
+/* Notes and filters */
+.note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; background: var(--soft); border-radius: 12px; padding: 12px 16px; color: var(--muted); }
+.link { background: none; border: 0; padding: 4px 0; color: var(--ink); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.board-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 7px 16px; font-weight: 500; color: var(--muted); cursor: pointer; }
+.chip:hover { color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); font-weight: 600; }
+
+/* Owner cards */
+.groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 16px; align-items: start; }
+.group-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.avatar { flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--soft); border: 1px solid var(--line); display: grid; place-items: center; font-weight: 700; font-size: 0.95rem; color: var(--muted); }
+.group-head h3 { font-family: var(--font-display); font-weight: 600; font-size: 1.3rem; letter-spacing: -0.01em; min-width: 0; overflow-wrap: anywhere; }
+.counts { margin-left: auto; text-align: right; color: var(--muted); font-size: 0.9rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.items { list-style: none; }
+.item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 14px 10px; border-top: 1px solid var(--line); border-radius: 0; }
+.item.is-late { background: var(--red-soft); border-top-color: var(--red-line); border-radius: 12px; margin-top: 4px; }
+.item.is-late + .item { border-top-color: transparent; }
+.text { font-size: 1.08rem; line-height: 1.35; overflow-wrap: anywhere; }
+.item.is-done .text { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.due { margin-top: 3px; font-size: 0.92rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.due.late { color: var(--red); font-weight: 700; }
+.due.today { color: var(--ink); font-weight: 700; }
+
+.check { position: relative; display: block; width: 30px; height: 30px; margin-top: 1px; cursor: pointer; }
+.check input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.box { display: grid; place-items: center; width: 30px; height: 30px; border: 2px solid var(--muted); border-radius: 9px; background: var(--field); color: var(--on-accent); transition: background 0.15s ease, border-color 0.15s ease; }
+.box svg { opacity: 0; transition: opacity 0.15s ease; }
+.check input:checked + .box { background: var(--accent); border-color: var(--accent); }
+.check input:checked + .box svg { opacity: 1; }
+.check input:focus-visible + .box { outline: 3px solid var(--accent); outline-offset: 2px; }
+.check:hover .box { border-color: var(--accent); }
+.item.is-late .box { border-color: var(--red); }
+.item.is-late .check input:checked + .box { border-color: var(--accent); }
+
+.del { background: none; border: 0; width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); cursor: pointer; }
+.del:hover { color: var(--red); background: var(--soft); }
+.empty { color: var(--muted); padding: 14px 0 4px; }
+.empty-all { grid-column: 1 / -1; text-align: center; padding: 40px 20px; color: var(--muted); }
+.foot { color: var(--muted); font-size: 0.88rem; text-align: center; }
+
+.toast {
+  position: fixed;
+  left: max(16px, env(safe-area-inset-left, 0px));
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  margin: 0 auto;
+  max-width: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: 12px;
+  padding: 12px 16px;
+  z-index: 20;
+}
+.undo { background: none; border: 0; color: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 4px; }
+
+@media (max-width: 860px) {
+  .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .f-text, .fields .btn { grid-column: 1 / -1; }
+}
+@media (max-width: 520px) {
+  .fields { grid-template-columns: minmax(0, 1fr); }
+  .card { padding: 18px; }
+  .stats { gap: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Meeting Action Tracker</h1>
+      <p class="sub">Every agreed action, with an owner and a date.</p>
+    </div>
+    <p class="today" id="todayLabel"></p>
+  </header>
+
+  <section class="card summary" aria-label="Summary">
+    <dl class="stats">
+      <div class="stat"><dt>Open</dt><dd id="nOpen">0</dd></div>
+      <div class="stat"><dt>Done</dt><dd id="nDone">0</dd></div>
+      <div class="stat" id="statOverdue"><dt>Overdue</dt><dd id="nOverdue">0</dd></div>
+    </dl>
+    <div class="progress" id="bar" role="progressbar" aria-label="Share of actions done" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="barFill"></span></div>
+  </section>
+
+  <form class="card add" id="addForm" autocomplete="off">
+    <h2>Add an action</h2>
+    <div class="fields">
+      <div class="field f-text">
+        <label for="fText">Action</label>
+        <input id="fText" type="text" required maxlength="160" placeholder="e.g. Send the revised budget to finance">
+      </div>
+      <div class="field">
+        <label for="fOwner">Owner</label>
+        <input id="fOwner" type="text" list="ownerList" required maxlength="40" placeholder="Name">
+        <datalist id="ownerList"></datalist>
+      </div>
+      <div class="field">
+        <label for="fDue">Due date</label>
+        <input id="fDue" type="date" required>
+      </div>
+      <button class="btn" type="submit">Add action</button>
+    </div>
+  </form>
+
+  <div class="note" id="exampleNote" hidden>
+    <span>These are example actions to show how the tracker works.</span>
+    <button class="link" type="button" id="clearExamples">Clear examples</button>
+  </div>
+
+  <div class="board-head">
+    <h2>By owner</h2>
+    <div class="filters" role="group" aria-label="Filter actions">
+      <button class="chip" type="button" data-filter="all" aria-pressed="true">All</button>
+      <button class="chip" type="button" data-filter="open" aria-pressed="false">Open</button>
+      <button class="chip" type="button" data-filter="overdue" aria-pressed="false">Overdue</button>
+    </div>
+  </div>
+
+  <div class="groups" id="groups"></div>
+  <p class="foot">Saved in this browser only.</p>
+</div>
+
+<div class="toast" id="toast" role="status" hidden>
+  <span id="toastText"></span>
+  <button class="undo" type="button" id="undoBtn">Undo</button>
+</div>
+
+<script>
+(function () {
+  var KEY = 'meeting-action-tracker-v1';
+  var memory = null;
+  var filter = 'all';
+  var lastDeleted = null;
+  var toastTimer = null;
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function iso(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function parse(s) { var p = s.split('-').map(Number); return new Date(p[0], p[1] - 1, p[2]); }
+  function addDays(n) { var d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() + n); return d; }
+  function todayIso() { return iso(new Date()); }
+  function dayDiff(due, today) { return Math.round((parse(due) - parse(today)) / 86400000); }
+  function fmt(s) { return parse(s).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function uid() {
+    try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
+    return 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  function seed() {
+    function mk(text, owner, offset, done) {
+      return { id: uid(), text: text, owner: owner, due: iso(addDays(offset)), done: !!done, example: true };
+    }
+    return [
+      mk('Send the revised budget to finance', 'Priya', -3),
+      mk('Share customer interview notes with the team', 'Priya', 2),
+      mk('Schedule the design review', 'Priya', -2, true),
+      mk('Fix the login timeout bug', 'Dan', -1),
+      mk('Update the onboarding checklist', 'Dan', 0),
+      mk('Book a venue for the offsite', 'Marcus', 4),
+      mk('Draft the Q4 hiring plan', 'Marcus', 9),
+      mk('Confirm the vendor contract', 'Marcus', -5, true)
+    ];
+  }
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) {
+        var d = JSON.parse(raw);
+        if (d && Array.isArray(d.actions)) return d;
+      }
+    } catch (e) {}
+    return memory;
+  }
+  function save() {
+    memory = state;
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  var state = load();
+  if (!state) { state = { actions: seed() }; save(); }
+
+  var $ = function (id) { return document.getElementById(id); };
+  var els = {
+    open: $('nOpen'), done: $('nDone'), overdue: $('nOverdue'), statOverdue: $('statOverdue'),
+    bar: $('bar'), fill: $('barFill'), groups: $('groups'), owners: $('ownerList'),
+    note: $('exampleNote'), toast: $('toast'), toastText: $('toastText'),
+    text: $('fText'), owner: $('fOwner'), due: $('fDue'), today: $('todayLabel')
+  };
+
+  var CHECK = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var CROSS = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+
+  function dueInfo(a, t) {
+    var pretty = fmt(a.due);
+    if (a.done) return { text: 'Due ' + pretty, cls: '' };
+    var diff = dayDiff(a.due, t);
+    if (diff < 0) return { text: 'Overdue by ' + (-diff) + (diff === -1 ? ' day' : ' days') + ' · ' + pretty, cls: 'late' };
+    if (diff === 0) return { text: 'Due today', cls: 'today' };
+    if (diff === 1) return { text: 'Due tomorrow · ' + pretty, cls: '' };
+    return { text: 'Due ' + pretty, cls: '' };
+  }
+
+  function initials(name) {
+    var parts = name.trim().split(/\s+/);
+    var s = parts[0].charAt(0) + (parts.length > 1 ? parts[parts.length - 1].charAt(0) : '');
+    return s.toUpperCase();
+  }
+
+  function render() {
+    var t = todayIso();
+    var acts = state.actions;
+    var openList = acts.filter(function (a) { return !a.done; });
+    var nDone = acts.length - openList.length;
+    var nOver = openList.filter(function (a) { return a.due < t; }).length;
+
+    els.today.textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    els.open.textContent = openList.length;
+    els.done.textContent = nDone;
+    els.overdue.textContent = nOver;
+    els.statOverdue.classList.toggle('is-late', nOver > 0);
+    var pct = acts.length ? Math.round(nDone / acts.length * 100) : 0;
+    els.fill.style.width = pct + '%';
+    els.bar.setAttribute('aria-valuenow', pct);
+    els.note.hidden = !acts.some(function (a) { return a.example; });
+
+    var map = {}, order = [];
+    acts.forEach(function (a) {
+      var k = a.owner.trim().toLowerCase();
+      if (!map[k]) { map[k] = { name: a.owner.trim(), items: [] }; order.push(k); }
+      map[k].items.push(a);
+    });
+    order.sort(function (a, b) { return map[a].name.localeCompare(map[b].name); });
+
+    els.owners.innerHTML = order.map(function (k) { return '<option value="' + esc(map[k].name) + '">'; }).join('');
+
+    function passes(a) {
+      if (filter === 'open') return !a.done;
+      if (filter === 'overdue') return !a.done && a.due < t;
+      return true;
+    }
+
+    if (!acts.length) {
+      els.groups.innerHTML = '<div class="card empty-all">No actions yet. Add the first one above.</div>';
+      return;
+    }
+
+    var html = order.map(function (k) {
+      var g = map[k];
+      var gOpen = g.items.filter(function (a) { return !a.done; }).length;
+      var gDone = g.items.length - gOpen;
+      var visible = g.items.filter(passes);
+      if (!visible.length) return '';
+      visible.sort(function (a, b) {
+        if (a.done !== b.done) return a.done ? 1 : -1;
+        return a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
+      });
+      var rows = visible.map(function (a) {
+        var info = dueInfo(a, t);
+        var late = !a.done && a.due < t;
+        return '<li class="item' + (a.done ? ' is-done' : '') + (late ? ' is-late' : '') + '">' +
+          '<label class="check"><input type="checkbox" data-toggle="' + a.id + '"' + (a.done ? ' checked' : '') +
+          ' aria-label="Mark done: ' + esc(a.text) + '"><span class="box">' + CHECK + '</span></label>' +
+          '<div><p class="text">' + esc(a.text) + '</p><p class="due ' + info.cls + '">' + esc(info.text) + '</p></div>' +
+          '<button class="del" type="button" data-del="' + a.id + '" aria-label="Delete: ' + esc(a.text) + '">' + CROSS + '</button>' +
+          '</li>';
+      }).join('');
+      return '<section class="card group" aria-label="Actions for ' + esc(g.name) + '">' +
+        '<div class="group-head"><span class="avatar" aria-hidden="true">' + esc(initials(g.name)) + '</span>' +
+        '<h3>' + esc(g.name) + '</h3>' +
+        '<p class="counts">' + gOpen + ' open<br>' + gDone + ' done</p></div>' +
+        '<ul class="items">' + rows + '</ul></section>';
+    }).join('');
+
+    els.groups.innerHTML = html || '<div class="card empty-all">' + (filter === 'overdue' ? 'Nothing is overdue.' : 'No open actions.') + '</div>';
+  }
+
+  function showToast(msg, undo) {
+    els.toastText.textContent = msg;
+    $('undoBtn').hidden = !undo;
+    els.toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { els.toast.hidden = true; lastDeleted = null; }, 6000);
+  }
+
+  els.due.value = iso(addDays(7));
+
+  $('addForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var text = els.text.value.trim();
+    var owner = els.owner.value.trim();
+    var due = els.due.value;
+    if (!text || !owner || !due) return;
+    var existing = state.actions.filter(function (a) { return a.owner.trim().toLowerCase() === owner.toLowerCase(); })[0];
+    if (existing) owner = existing.owner.trim();
+    state.actions.push({ id: uid(), text: text, owner: owner, due: due, done: false });
+    save();
+    render();
+    els.text.value = '';
+    els.text.focus();
+  });
+
+  els.groups.addEventListener('change', function (e) {
+    var id = e.target.getAttribute && e.target.getAttribute('data-toggle');
+    if (!id) return;
+    state.actions.forEach(function (a) { if (a.id === id) a.done = e.target.checked; });
+    save();
+    render();
+  });
+
+  els.groups.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-del]') : null;
+    if (!btn) return;
+    var id = btn.getAttribute('data-del');
+    var idx = -1;
+    state.actions.forEach(function (a, i) { if (a.id === id) idx = i; });
+    if (idx < 0) return;
+    lastDeleted = { action: state.actions[idx], index: idx };
+    state.actions.splice(idx, 1);
+    save();
+    render();
+    showToast('Action deleted', true);
+  });
+
+  $('undoBtn').addEventListener('click', function () {
+    if (!lastDeleted) return;
+    state.actions.splice(Math.min(lastDeleted.index, state.actions.length), 0, lastDeleted.action);
+    lastDeleted = null;
+    els.toast.hidden = true;
+    save();
+    render();
+  });
+
+  $('clearExamples').addEventListener('click', function () {
+    state.actions = state.actions.filter(function (a) { return !a.example; });
+    save();
+    render();
+  });
+
+  document.querySelectorAll('.chip').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      filter = chip.getAttribute('data-filter');
+      document.querySelectorAll('.chip').forEach(function (c) {
+        c.setAttribute('aria-pressed', c === chip ? 'true' : 'false');
+      });
+      render();
+    });
+  });
+
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) render(); });
+
+  render();
+})();
+</script>
+</body>
+</html>
