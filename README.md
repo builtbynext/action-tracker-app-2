@@ -5,17 +5,27 @@ A single-page app for teams that keep forgetting agreed actions. Add an action w
 - Open, done and overdue counts with a progress bar
 - Filter by All, Open or Overdue
 - Delete with undo
+- Sign in and sign out with a username and password
+- Users panel to see the team and add users with a password you choose
 - Live shared data in Supabase: everyone sees the same actions, refreshed every 30 seconds and when the tab regains focus
 
 No build step and no dependencies. The whole app is `index.html`, which talks to Supabase over its REST API.
 
-## Database
+## Database and sign-in
 
-The app reads and writes a single `public.actions` table. `supabase/schema.sql` holds the table, row-level security policies and example rows.
+The app uses Supabase for data and sign-in:
+
+- `public.actions`: the actions. Only signed-in users can read or change them.
+- `public.profiles`: one row per user, with username and display name. A trigger fills it when a user is created.
+- `create-user` edge function (`supabase/functions/create-user/index.ts`): adds a user with a chosen password. It checks the caller is signed in and holds the admin key, which never reaches the browser.
+
+`supabase/schema.sql` has the tables, policies and trigger.
+
+Users sign in with a username. Behind the scenes it maps to `username@tracker.internal` in Supabase Auth, so no real email addresses or confirmation emails are needed.
 
 The Supabase URL and publishable key are set at the top of the script in `index.html`. A publishable key is meant to be public.
 
-**Access is open:** the policies let anyone with the site link view, add, tick and delete actions. That suits a small team sharing a link, but it is not private. To restrict it, add Supabase Auth and change the policies to check `auth.uid()`.
+**All signed-in users are equal.** Any signed-in user can add users. Passwords need at least 8 characters, so change the starting password for each person.
 
 ## Run locally
 
