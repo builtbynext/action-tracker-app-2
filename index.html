@@ -135,6 +135,10 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem
 .empty { color: var(--muted); padding: 14px 0 4px; }
 .empty-all { grid-column: 1 / -1; text-align: center; padding: 40px 20px; color: var(--muted); }
 .foot { color: var(--muted); font-size: 0.88rem; text-align: center; }
+.foot.warn { color: var(--red); font-weight: 600; }
+.err-detail { margin-top: 6px; font-size: 0.92rem; overflow-wrap: anywhere; }
+.btn.retry { margin-top: 16px; }
+.btn:disabled { opacity: 0.6; cursor: progress; }
 
 .toast {
   position: fixed;
@@ -204,7 +208,7 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem
         <label for="fDue">Due date</label>
         <input id="fDue" type="date" required>
       </div>
-      <button class="btn" type="submit">Add action</button>
+      <button class="btn" type="submit" id="addBtn">Add action</button>
     </div>
   </form>
 
@@ -223,7 +227,7 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem
   </div>
 
   <div class="groups" id="groups"></div>
-  <p class="foot">Saved in this browser only.</p>
+  <p class="foot" id="footNote" role="status">Connecting to the database…</p>
 </div>
 
 <div class="toast" id="toast" role="status" hidden>
@@ -233,11 +237,16 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem
 
 <script>
 (function () {
-  var KEY = 'meeting-action-tracker-v1';
-  var memory = null;
+  var SUPABASE_URL = 'https://rkdnbxfqzlfxktvuiory.supabase.co';
+  var SUPABASE_KEY = 'sb_publishable_iMc4SN8CYU67gVnD2F_M4w_ZS1BPx03'; // publishable key, safe to ship in the browser
+  var TABLE = SUPABASE_URL + '/rest/v1/actions';
+  var REFRESH_MS = 30000;
+
   var filter = 'all';
   var lastDeleted = null;
   var toastTimer = null;
+  var pending = 0;
+  var state = { actions: [], loaded: false, error: null, syncedAt: null, syncFailed: false };
 
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
   function iso(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
@@ -247,51 +256,71 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem
   function dayDiff(due, today) { return Math.round((parse(due) - parse(today)) / 86400000); }
   function fmt(s) { return parse(s).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); }
   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
-  function uid() {
-    try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
-    return 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+  /* ---------- Supabase REST helper ---------- */
+  function api(query, opts) {
+    opts = opts || {};
+    var headers = { apikey: SUPABASE_KEY };
+    if (opts.body) headers['Content-Type'] = 'application/json';
+    if (opts.prefer) headers.Prefer = opts.prefer;
+    return fetch(TABLE + (query || ''), {
+      method: opts.method || 'GET',
+      headers: headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    }).then(function (res) {
+      return res.text().then(function (txt) {
+        if (!res.ok) {
+          var msg = 'Request failed (' + res.status + ')';
+          try { var j = JSON.parse(txt); if (j && j.message) msg = j.message; } catch (e) {}
+          throw new Error(msg);
+        }
+        return txt ? JSON.parse(txt) : null;
+      });
+    });
   }
 
-  function seed() {
-    function mk(text, owner, offset, done) {
-      return { id: uid(), text: text, owner: owner, due: iso(addDays(offset)), done: !!done, example: true };
-    }
-    return [
-      mk('Send the revised budget to finance', 'Priya', -3),
-      mk('Share customer interview notes with the team', 'Priya', 2),
-      mk('Schedule the design review', 'Priya', -2, true),
-      mk('Fix the login timeout bug', 'Dan', -1),
-      mk('Update the onboarding checklist', 'Dan', 0),
-      mk('Book a venue for the offsite', 'Marcus', 4),
-      mk('Draft the Q4 hiring plan', 'Marcus', 9),
-      mk('Confirm the vendor contract', 'Marcus', -5, true)
-    ];
+  function fetchAll() {
+    return api('?select=id,text,owner,due,done,example,created_at&order=created_at.asc');
   }
 
-  function load() {
-    try {
-      var raw = localStorage.getItem(KEY);
-      if (raw) {
-        var d = JSON.parse(raw);
-        if (d && Array.isArray(d.actions)) return d;
-      }
-    } catch (e) {}
-    return memory;
-  }
-  function save() {
-    memory = state;
-    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+  function refresh(manual) {
+    if (pending > 0) return Promise.resolve();
+    return fetchAll().then(function (rows) {
+      if (pending > 0) return;
+      state.actions = rows || [];
+      state.loaded = true;
+      state.error = null;
+      state.syncFailed = false;
+      state.syncedAt = new Date();
+      render();
+    }).catch(function (err) {
+      if (!state.loaded) { state.error = err.message; }
+      else { state.syncFailed = true; }
+      render();
+    });
   }
 
-  var state = load();
-  if (!state) { state = { actions: seed() }; save(); }
+  function write(promiseFn, rollback, failMsg) {
+    pending++;
+    return promiseFn().then(function (r) {
+      pending--;
+      return r;
+    }).catch(function (err) {
+      pending--;
+      if (rollback) rollback();
+      render();
+      showToast(failMsg + ' ' + err.message, false);
+      return null;
+    });
+  }
 
   var $ = function (id) { return document.getElementById(id); };
   var els = {
     open: $('nOpen'), done: $('nDone'), overdue: $('nOverdue'), statOverdue: $('statOverdue'),
     bar: $('bar'), fill: $('barFill'), groups: $('groups'), owners: $('ownerList'),
     note: $('exampleNote'), toast: $('toast'), toastText: $('toastText'),
-    text: $('fText'), owner: $('fOwner'), due: $('fDue'), today: $('todayLabel')
+    text: $('fText'), owner: $('fOwner'), due: $('fDue'), today: $('todayLabel'),
+    foot: $('footNote'), submit: $('addBtn')
   };
 
   var CHECK = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -313,6 +342,19 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem
     return s.toUpperCase();
   }
 
+  function renderFoot() {
+    if (state.syncFailed) {
+      els.foot.textContent = 'Could not reach the database. Showing the last data loaded' +
+        (state.syncedAt ? ' at ' + state.syncedAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '') + '.';
+      els.foot.classList.add('warn');
+    } else {
+      els.foot.classList.remove('warn');
+      els.foot.textContent = state.syncedAt
+        ? 'Live data · updated ' + state.syncedAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+        : 'Connecting to the database…';
+    }
+  }
+
   function render() {
     var t = todayIso();
     var acts = state.actions;
@@ -329,6 +371,20 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem
     els.fill.style.width = pct + '%';
     els.bar.setAttribute('aria-valuenow', pct);
     els.note.hidden = !acts.some(function (a) { return a.example; });
+    renderFoot();
+
+    if (!state.loaded) {
+      if (state.error) {
+        els.groups.innerHTML = '<div class="card empty-all"><p>Could not load actions from the database.</p>' +
+          '<p class="err-detail">' + esc(state.error) + '</p>' +
+          '<button class="btn retry" type="button" id="retryBtn">Try again</button></div>';
+        var rb = $('retryBtn');
+        if (rb) rb.addEventListener('click', function () { state.error = null; render(); refresh(true); });
+      } else {
+        els.groups.innerHTML = '<div class="card empty-all">Loading actions…</div>';
+      }
+      return;
+    }
 
     var map = {}, order = [];
     acts.forEach(function (a) {
@@ -386,34 +442,49 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem
     $('undoBtn').hidden = !undo;
     els.toast.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { els.toast.hidden = true; lastDeleted = null; }, 6000);
+    toastTimer = setTimeout(function () { els.toast.hidden = true; lastDeleted = null; }, undo ? 6000 : 8000);
   }
 
   els.due.value = iso(addDays(7));
 
+  /* ---------- Add ---------- */
   $('addForm').addEventListener('submit', function (e) {
     e.preventDefault();
+    if (!state.loaded) { showToast('Still connecting to the database. Try again in a moment.', false); return; }
     var text = els.text.value.trim();
     var owner = els.owner.value.trim();
     var due = els.due.value;
     if (!text || !owner || !due) return;
     var existing = state.actions.filter(function (a) { return a.owner.trim().toLowerCase() === owner.toLowerCase(); })[0];
     if (existing) owner = existing.owner.trim();
-    state.actions.push({ id: uid(), text: text, owner: owner, due: due, done: false });
-    save();
-    render();
-    els.text.value = '';
-    els.text.focus();
+    els.submit.disabled = true;
+    write(function () {
+      return api('', { method: 'POST', prefer: 'return=representation', body: { text: text, owner: owner, due: due } });
+    }, null, 'Could not add the action.').then(function (rows) {
+      els.submit.disabled = false;
+      if (!rows || !rows[0]) return;
+      state.actions.push(rows[0]);
+      render();
+      els.text.value = '';
+      els.text.focus();
+    });
   });
 
+  /* ---------- Tick / untick ---------- */
   els.groups.addEventListener('change', function (e) {
     var id = e.target.getAttribute && e.target.getAttribute('data-toggle');
     if (!id) return;
-    state.actions.forEach(function (a) { if (a.id === id) a.done = e.target.checked; });
-    save();
+    var item = state.actions.filter(function (a) { return a.id === id; })[0];
+    if (!item) return;
+    var prev = item.done, next = e.target.checked;
+    item.done = next;
     render();
+    write(function () {
+      return api('?id=eq.' + encodeURIComponent(id), { method: 'PATCH', body: { done: next } });
+    }, function () { item.done = prev; }, 'Could not update the action.');
   });
 
+  /* ---------- Delete and undo ---------- */
   els.groups.addEventListener('click', function (e) {
     var btn = e.target.closest ? e.target.closest('[data-del]') : null;
     if (!btn) return;
@@ -421,26 +492,38 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem
     var idx = -1;
     state.actions.forEach(function (a, i) { if (a.id === id) idx = i; });
     if (idx < 0) return;
-    lastDeleted = { action: state.actions[idx], index: idx };
+    var removed = state.actions[idx];
     state.actions.splice(idx, 1);
-    save();
     render();
-    showToast('Action deleted', true);
+    write(function () {
+      return api('?id=eq.' + encodeURIComponent(id), { method: 'DELETE' });
+    }, function () { state.actions.splice(Math.min(idx, state.actions.length), 0, removed); }, 'Could not delete the action.')
+      .then(function (r) {
+        if (r === null && state.actions.indexOf(removed) === -1 && !state.actions.some(function (a) { return a.id === id; })) {
+          lastDeleted = { action: removed, index: idx };
+          showToast('Action deleted', true);
+        }
+      });
   });
 
   $('undoBtn').addEventListener('click', function () {
     if (!lastDeleted) return;
-    state.actions.splice(Math.min(lastDeleted.index, state.actions.length), 0, lastDeleted.action);
+    var back = lastDeleted;
     lastDeleted = null;
     els.toast.hidden = true;
-    save();
-    render();
+    write(function () {
+      return api('', { method: 'POST', prefer: 'return=minimal', body: back.action });
+    }, null, 'Could not restore the action.').then(function () { refresh(); });
   });
 
+  /* ---------- Clear examples ---------- */
   $('clearExamples').addEventListener('click', function () {
+    var before = state.actions.slice();
     state.actions = state.actions.filter(function (a) { return !a.example; });
-    save();
     render();
+    write(function () {
+      return api('?example=eq.true', { method: 'DELETE' });
+    }, function () { state.actions = before; }, 'Could not clear the examples.');
   });
 
   document.querySelectorAll('.chip').forEach(function (chip) {
@@ -453,9 +536,11 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.9rem
     });
   });
 
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) render(); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
+  setInterval(function () { if (!document.hidden) refresh(); }, REFRESH_MS);
 
   render();
+  refresh();
 })();
 </script>
 </body>
